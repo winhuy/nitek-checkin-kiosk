@@ -1,0 +1,13 @@
+[Unit]
+Description=reTerminal DM CSI Camera to V4L2 Loopback Streamer Bridge
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/bin/bash /home/pi/nitek-checkin-kiosk/reterminal-setup/camera-bridge.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
