@@ -300,16 +300,6 @@ function AppShell() {
                   {session.username}
                 </span>
                 <button
-                  id="btn-switch-kiosk-mode"
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => setIsKioskMode(true)}
-                  title="Chuyển sang Chế độ Kiosk reTerminal DM"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                >
-                  <IconScanner size={14} color="var(--accent-primary)" />
-                  <span className="header-hide-mobile">Kiosk</span>
-                </button>
-                <button
                   id="btn-logout"
                   className="btn btn-secondary btn-sm"
                   onClick={handleLogout}
