@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # reTerminal DM CSI Camera to V4L2 Loopback Streamer Bridge
-# Feeds Sony IMX219 libcamera stream into /dev/video20 standard V4L2 device
+# Feeds Sony IMX219 libcamera stream into v4l2loopback standard V4L2 device
 # ==============================================================================
 
-# Ensure v4l2loopback module is loaded
-sudo modprobe v4l2loopback devices=1 video_nr=20 card_label="reTerminal-CSI-Cam" exclusive_caps=1 || true
+# Find the loopback device node dynamically
+LOOP_DEV=$(v4l2-ctl --list-devices 2>/dev/null | grep -A 1 "reTerminal-CSI-Cam" | grep "/dev/video" | tr -d '\t ' || true)
 
-# Continuous streaming from Sony IMX219 (libcamerasrc) to /dev/video20 (V4L2 Webcam device)
-exec /usr/bin/gst-launch-1.0 libcamerasrc ! video/x-raw,width=640,height=480,framerate=30/1 ! videoconvert ! video/x-raw,format=YUY2 ! v4l2sink device=/dev/video20 sync=false
+if [ -z "$LOOP_DEV" ]; then
+  LOOP_DEV="/dev/video24"
+fi
+
+sudo chmod 666 "$LOOP_DEV" 2>/dev/null || true
+
+# Continuous streaming from Sony IMX219 (libcamerasrc) to loopback device
+exec /usr/bin/gst-launch-1.0 libcamerasrc ! video/x-raw,width=640,height=480,framerate=30/1 ! videoconvert ! video/x-raw,format=YUY2 ! v4l2sink device="$LOOP_DEV" sync=false
