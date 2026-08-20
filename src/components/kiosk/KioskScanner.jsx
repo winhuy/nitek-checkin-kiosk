@@ -516,18 +516,50 @@ export default function KioskScanner({ onExitKiosk }) {
         qrScannerRef.current = null;
       }
 
-      // 1. Query available video input devices
-      const rawDevices = await Html5Qrcode.getCameras().catch(() => []);
-      
-      // Filter out raw 'unicam' (bayer format) if loopback device exists
-      const filtered = rawDevices.filter(d => {
-        const l = (d.label || '').toLowerCase();
-        return !l.includes('unicam') && !l.includes('bcm2835');
-      });
+      // 1. Query all videoinput devices
+      const allDevs = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+      const videoDevs = allDevs.filter(d => d.kind === 'videoinput');
 
-      // Prefer filtered devices, otherwise reverse rawDevices so virtual /dev/video24 comes before /dev/video0
-      const devices = filtered.length > 0 ? filtered : [...rawDevices].reverse();
-      setCameraList(devices || []);
+      // 2. Probe devices to find the readable one (filters out raw bayer unicam nodes)
+      let targetDeviceId = null;
+      let workingList = [];
+
+      // Test devices in reverse order (loopback / USB cams are listed after raw unicam nodes)
+      const probeOrder = [...videoDevs].reverse();
+
+      for (const dev of probeOrder) {
+        try {
+          const constraints = dev.deviceId
+            ? { video: { deviceId: { exact: dev.deviceId } } }
+            : { video: true };
+          const testStream = await navigator.mediaDevices.getUserMedia(constraints);
+          testStream.getTracks().forEach(t => t.stop());
+          workingList.push(dev);
+          if (!targetDeviceId) {
+            targetDeviceId = dev.deviceId;
+          }
+        } catch (probeErr) {
+          console.warn('Skipping unreadable video device:', dev.label || dev.deviceId, probeErr.name);
+        }
+      }
+
+      // If probe found working devices, update camera list
+      const finalList = workingList.length > 0 ? workingList : videoDevs;
+      setCameraList(finalList);
+
+      // 3. Clear viewfinder container completely before attaching Html5Qrcode
+      const vfEl = document.getElementById('kiosk-qr-viewfinder');
+      if (vfEl) vfEl.innerHTML = '';
+
+      const scanner = new Html5Qrcode('kiosk-qr-viewfinder', {
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.QR_CODE,
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.EAN_13,
+        ],
+        verbose: false,
+      });
+      qrScannerRef.current = scanner;
 
       const qrConfig = {
         fps: 15,
@@ -539,73 +571,25 @@ export default function KioskScanner({ onExitKiosk }) {
         aspectRatio: 1.0,
       };
 
-      // 2. Try devices one by one with a fresh Html5Qrcode instance
-      let started = false;
-      if (devices && devices.length > 0) {
-        for (let i = 0; i < devices.length; i++) {
-          const targetDev = devices[(cameraIndex + i) % devices.length];
-          try {
-            console.log('Attempting camera device:', targetDev.label || targetDev.id);
-            const scanner = new Html5Qrcode('kiosk-qr-viewfinder', {
-              formatsToSupport: [
-                Html5QrcodeSupportedFormats.QR_CODE,
-                Html5QrcodeSupportedFormats.CODE_128,
-                Html5QrcodeSupportedFormats.EAN_13,
-              ],
-              verbose: false,
-            });
-            qrScannerRef.current = scanner;
-
-            await scanner.start(
-              targetDev.id,
-              qrConfig,
-              (decodedText) => handleProcessCode(decodedText),
-              () => {}
-            );
-            setCameraActive(true);
-            started = true;
-            break;
-          } catch (devErr) {
-            console.warn(`Camera attempt on ${targetDev.id} failed:`, devErr);
-            if (qrScannerRef.current) {
-              try {
-                await qrScannerRef.current.stop();
-                qrScannerRef.current.clear();
-              } catch (_) { /* ignore */ }
-              qrScannerRef.current = null;
-            }
-          }
-        }
+      // 4. Start scanner on targetDeviceId
+      const activeDevId = targetDeviceId || (finalList[cameraIndex % finalList.length]?.deviceId);
+      
+      if (activeDevId) {
+        await scanner.start(
+          activeDevId,
+          qrConfig,
+          (decodedText) => handleProcessCode(decodedText),
+          () => {}
+        );
+      } else {
+        await scanner.start(
+          { facingMode: 'environment' },
+          qrConfig,
+          (decodedText) => handleProcessCode(decodedText),
+          () => {}
+        );
       }
-
-      if (!started) {
-        // Fallback: try with generic facingMode
-        const fallbackScanner = new Html5Qrcode('kiosk-qr-viewfinder', {
-          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-          verbose: false,
-        });
-        qrScannerRef.current = fallbackScanner;
-
-        try {
-          await fallbackScanner.start(
-            { facingMode: 'environment' },
-            qrConfig,
-            (decodedText) => handleProcessCode(decodedText),
-            () => {}
-          );
-          setCameraActive(true);
-          started = true;
-        } catch (envErr) {
-          await fallbackScanner.start(
-            { facingMode: 'user' },
-            qrConfig,
-            (decodedText) => handleProcessCode(decodedText),
-            () => {}
-          );
-          setCameraActive(true);
-          started = true;
-        }
-      }
+      setCameraActive(true);
     } catch (err) {
       console.error('Kiosk camera start failed:', err);
       setCameraError(err.name ? `${err.name}: ${err.message}` : (err.message || 'Không thể mở camera. Vui lòng thử lại.'));
