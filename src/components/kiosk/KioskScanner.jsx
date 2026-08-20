@@ -475,6 +475,9 @@ export default function KioskScanner({ onExitKiosk }) {
     await loadAttendance();
   }, [activeSession, members, recordAttendance, loadAttendance]);
 
+  const handleProcessCodeRef = useRef(null);
+  handleProcessCodeRef.current = handleProcessCode;
+
   // ── Hardware Barcode / USB Scanner Global Key Listener ───────────────────
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -494,7 +497,9 @@ export default function KioskScanner({ onExitKiosk }) {
         if (barcodeBufferRef.current.length >= 2) {
           const code = barcodeBufferRef.current;
           barcodeBufferRef.current = '';
-          handleProcessCode(code);
+          if (handleProcessCodeRef.current) {
+            handleProcessCodeRef.current(code);
+          }
         }
       } else if (e.key.length === 1) {
         barcodeBufferRef.current += e.key;
@@ -503,7 +508,7 @@ export default function KioskScanner({ onExitKiosk }) {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleProcessCode]);
+  }, []);
 
   // ── Continuous QR Scan Loop via Canvas and jsQR ──────────────────────────
   const stopScanner = useCallback(() => {
@@ -538,15 +543,15 @@ export default function KioskScanner({ onExitKiosk }) {
             const code = jsQR(imageData.data, imageData.width, imageData.height, {
               inversionAttempts: 'dontInvert',
             });
-            if (code && code.data) {
-              handleProcessCode(code.data);
+            if (code && code.data && handleProcessCodeRef.current) {
+              handleProcessCodeRef.current(code.data);
             }
           } catch (_) { /* ignore frame dropped */ }
         }
       }
     }
     animFrameRef.current = requestAnimationFrame(scanLoop);
-  }, [handleProcessCode]);
+  }, []);
 
   // ── Start Native Camera Stream ──────────────────────────────────────────
   const startScanner = useCallback(async () => {
@@ -591,11 +596,15 @@ export default function KioskScanner({ onExitKiosk }) {
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        await videoRef.current.play().catch(e => {
+          if (e.name !== 'AbortError') throw e;
+        });
         setCameraActive(true);
+        if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
         animFrameRef.current = requestAnimationFrame(scanLoop);
       }
     } catch (err) {
+      if (err.name === 'AbortError') return;
       console.error('Kiosk camera start failed:', err);
       setCameraError(err.name ? `${err.name}: ${err.message}` : (err.message || 'Không thể mở camera. Vui lòng thử lại.'));
       setCameraActive(false);
@@ -611,12 +620,16 @@ export default function KioskScanner({ onExitKiosk }) {
   };
 
   useEffect(() => {
-    const t = setTimeout(startScanner, 300);
+    let mounted = true;
+    const t = setTimeout(() => {
+      if (mounted) startScanner();
+    }, 300);
     return () => {
+      mounted = false;
       clearTimeout(t);
       stopScanner();
     };
-  }, [startScanner, stopScanner]);
+  }, [cameraIndex, startScanner, stopScanner]);
 
   // ── Touch Numpad Handlers ───────────────────────────────────────────────
   const handleNumpadPress = (val) => {
