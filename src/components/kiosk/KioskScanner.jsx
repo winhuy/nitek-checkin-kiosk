@@ -517,7 +517,19 @@ export default function KioskScanner({ onExitKiosk }) {
       }
 
       // 1. Query available video input devices
-      const devices = await Html5Qrcode.getCameras().catch(() => []);
+      const rawDevices = await Html5Qrcode.getCameras().catch(() => []);
+      
+      // Prioritize reTerminal / CSI loopback device first
+      const devices = [...rawDevices].sort((a, b) => {
+        const aL = (a.label || '').toLowerCase();
+        const bL = (b.label || '').toLowerCase();
+        const aHit = aL.includes('reterminal') || aL.includes('loopback') || aL.includes('csi');
+        const bHit = bL.includes('reterminal') || bL.includes('loopback') || bL.includes('csi');
+        if (aHit && !bHit) return -1;
+        if (!aHit && bHit) return 1;
+        return 0;
+      });
+
       setCameraList(devices || []);
 
       const scanner = new Html5Qrcode('kiosk-qr-viewfinder', {
@@ -540,37 +552,53 @@ export default function KioskScanner({ onExitKiosk }) {
         aspectRatio: 1.0,
       };
 
-      // 2. Select camera config: Device ID -> or Environment -> or Generic
-      let targetConfig;
+      // 2. Try devices in priority order
+      let started = false;
       if (devices && devices.length > 0) {
-        const chosen = devices[cameraIndex % devices.length];
-        targetConfig = chosen.id;
-      } else {
-        targetConfig = { facingMode: 'environment' };
+        for (let i = 0; i < devices.length; i++) {
+          const targetDev = devices[(cameraIndex + i) % devices.length];
+          try {
+            console.log('Attempting to start camera:', targetDev.label, targetDev.id);
+            await scanner.start(
+              targetDev.id,
+              qrConfig,
+              (decodedText) => handleProcessCode(decodedText),
+              () => {}
+            );
+            setCameraActive(true);
+            started = true;
+            break;
+          } catch (devErr) {
+            console.warn(`Camera ${targetDev.label} (${targetDev.id}) failed:`, devErr);
+          }
+        }
       }
 
-      try {
-        await scanner.start(
-          targetConfig,
-          qrConfig,
-          (decodedText) => handleProcessCode(decodedText),
-          () => {}
-        );
-        setCameraActive(true);
-      } catch (firstErr) {
-        console.warn('First camera attempt failed, trying fallback mode:', firstErr);
+      if (!started) {
         // Fallback: try with generic facingMode
-        await scanner.start(
-          { facingMode: 'environment' },
-          qrConfig,
-          (decodedText) => handleProcessCode(decodedText),
-          () => {}
-        );
-        setCameraActive(true);
+        try {
+          await scanner.start(
+            { facingMode: 'environment' },
+            qrConfig,
+            (decodedText) => handleProcessCode(decodedText),
+            () => {}
+          );
+          setCameraActive(true);
+          started = true;
+        } catch (envErr) {
+          await scanner.start(
+            { facingMode: 'user' },
+            qrConfig,
+            (decodedText) => handleProcessCode(decodedText),
+            () => {}
+          );
+          setCameraActive(true);
+          started = true;
+        }
       }
     } catch (err) {
       console.error('Kiosk camera start failed:', err);
-      setCameraError(err.message || 'Không thể mở camera. Vui lòng kiểm tra quyền hoặc cắm lại camera.');
+      setCameraError(err.name ? `${err.name}: ${err.message}` : (err.message || 'Không thể mở camera. Vui lòng thử lại.'));
       setCameraActive(false);
     }
   }, [cameraIndex, handleProcessCode]);
