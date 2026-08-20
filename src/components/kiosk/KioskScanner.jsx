@@ -366,6 +366,9 @@ export default function KioskScanner({ onExitKiosk }) {
   const cooldownRef = useRef(false);
   const barcodeBufferRef = useRef('');
   const lastKeyTimeRef = useRef(0);
+  const lastScanTimeRef = useRef(0);
+  const overlayRef = useRef(null);
+  overlayRef.current = overlay;
 
   // ── Digital Clock Interval ──────────────────────────────────────────────
   useEffect(() => {
@@ -563,33 +566,52 @@ export default function KioskScanner({ onExitKiosk }) {
   }, []);
 
   const scanLoop = useCallback(() => {
+    // If modal overlay or cooldown is active, skip decoding to free CPU
+    if (overlayRef.current || cooldownRef.current) {
+      animFrameRef.current = requestAnimationFrame(scanLoop);
+      return;
+    }
+
+    const now = performance.now();
+    // Throttle QR decoding to 12 FPS (every 80ms) — ultra responsive for QR, 80% CPU reduction
+    if (now - lastScanTimeRef.current < 80) {
+      animFrameRef.current = requestAnimationFrame(scanLoop);
+      return;
+    }
+    lastScanTimeRef.current = now;
+
     const canvas = canvasRef.current;
     const img = mjpegImgRef.current;
     const video = videoRef.current;
 
     let source = null;
-    let w = 0;
-    let h = 0;
+    let srcW = 0;
+    let srcH = 0;
 
     if (img && img.naturalWidth > 0 && img.style.display !== 'none') {
       source = img;
-      w = img.naturalWidth;
-      h = img.naturalHeight;
+      srcW = img.naturalWidth;
+      srcH = img.naturalHeight;
     } else if (video && video.readyState >= 2 && video.style.display !== 'none') {
       source = video;
-      w = video.videoWidth || 640;
-      h = video.videoHeight || 480;
+      srcW = video.videoWidth || 640;
+      srcH = video.videoHeight || 480;
     }
 
-    if (source && canvas && w > 0 && h > 0) {
-      canvas.width = w;
-      canvas.height = h;
+    if (source && canvas && srcW > 0 && srcH > 0) {
+      // Optimal scan canvas size (400x300 for high precision & minimal CPU overhead)
+      const SCAN_W = 400;
+      const SCAN_H = 300;
+
+      if (canvas.width !== SCAN_W) canvas.width = SCAN_W;
+      if (canvas.height !== SCAN_H) canvas.height = SCAN_H;
+
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (ctx) {
-        ctx.drawImage(source, 0, 0, w, h);
+        ctx.drawImage(source, 0, 0, SCAN_W, SCAN_H);
         try {
-          const imageData = ctx.getImageData(0, 0, w, h);
-          const code = jsQR(imageData.data, imageData.width, imageData.height, {
+          const imageData = ctx.getImageData(0, 0, SCAN_W, SCAN_H);
+          const code = jsQR(imageData.data, SCAN_W, SCAN_H, {
             inversionAttempts: 'dontInvert',
           });
           if (code && code.data && handleProcessCodeRef.current) {

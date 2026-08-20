@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 reTerminal DM Ultra-Fast Native MJPEG Camera Streamer with Dynamic Orientation Control
-Uses libcamera-vid directly with zero-copy stdout piping and HTTP streaming.
+Uses libcamera-vid directly with zero-copy stdout piping, event-driven frame broadcast, and low CPU usage.
 Endpoints:
   - http://127.0.0.1:5001/stream.mjpg (Continuous MJPEG stream @ 30 FPS)
   - http://127.0.0.1:5001/snapshot.jpg (Latest frame JPEG)
@@ -21,8 +21,7 @@ from socketserver import ThreadingMixIn
 
 PORT = 5001
 LATEST_FRAME = None
-FRAME_LOCK = threading.Lock()
-CLIENTS = set()
+FRAME_CONDITION = threading.Condition()
 CONFIG_FILE = "/tmp/camera_orientation.json"
 
 # Default orientation: Mirror mode (horizontal flip only for easy selfie scanning)
@@ -111,7 +110,7 @@ class MJPEGHandler(BaseHTTPRequestHandler):
                     rot = int(params['rotation'][0])
                     if rot in (0, 180) and CURRENT_CONFIG['rotation'] != rot:
                         CURRENT_CONFIG['rotation'] = rot
-                        CURRENT_CONFIG['hflip'] = (rot == 180)
+                        CURRENT_CONFIG['hflip'] = (rot == 180 or rot == 0) # Keep mirror if preferred
                         CURRENT_CONFIG['vflip'] = (rot == 180)
                         changed = True
                 except ValueError:
@@ -129,7 +128,7 @@ class MJPEGHandler(BaseHTTPRequestHandler):
             return
 
         if path == '/snapshot.jpg':
-            with FRAME_LOCK:
+            with FRAME_CONDITION:
                 frame = LATEST_FRAME
             if frame is None:
                 self.send_error(503, 'Camera initializing')
@@ -154,8 +153,11 @@ class MJPEGHandler(BaseHTTPRequestHandler):
             last_sent = None
             try:
                 while True:
-                    with FRAME_LOCK:
+                    with FRAME_CONDITION:
+                        # Wait for next frame event with 1.0s timeout
+                        FRAME_CONDITION.wait(timeout=1.0)
                         frame = LATEST_FRAME
+
                     if frame is not None and frame is not last_sent:
                         self.wfile.write(b'--frame\r\n')
                         self.wfile.write(b'Content-Type: image/jpeg\r\n')
@@ -164,8 +166,6 @@ class MJPEGHandler(BaseHTTPRequestHandler):
                         self.wfile.write(b'\r\n')
                         self.wfile.flush()
                         last_sent = frame
-                    else:
-                        time.sleep(0.01)
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
@@ -197,6 +197,7 @@ def build_camera_cmd():
         '--height', '480',
         '--framerate', '30',
         '--codec', 'mjpeg',
+        '--quality', '80',
         '--nopreview'
     ]
 
@@ -243,8 +244,9 @@ def capture_loop():
                     jpeg_bytes = bytes(buf[soi:eoi + 2])
                     del buf[:eoi + 2]
 
-                    with FRAME_LOCK:
+                    with FRAME_CONDITION:
                         LATEST_FRAME = jpeg_bytes
+                        FRAME_CONDITION.notify_all()
 
             stderr_out = proc.stderr.read().decode('utf-8', errors='ignore') if proc.stderr else ''
             print(f"[MJPEG Server] Camera process exited with code {proc.returncode}. Stderr: {stderr_out}")
