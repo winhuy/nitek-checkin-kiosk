@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """
-reTerminal DM Ultra-Fast Native MJPEG Camera Streamer
+reTerminal DM Ultra-Fast Native MJPEG Camera Streamer with Dynamic Orientation Control
 Uses libcamera-vid directly with zero-copy stdout piping and HTTP streaming.
 Endpoints:
   - http://127.0.0.1:5001/stream.mjpg (Continuous MJPEG stream @ 30 FPS)
   - http://127.0.0.1:5001/snapshot.jpg (Latest frame JPEG)
   - http://127.0.0.1:5001/health (Healthcheck JSON)
+  - http://127.0.0.1:5001/flip (Toggle flip / rotation: ?hflip=0/1&vflip=0/1 or ?rotation=0/180)
 """
 
 import sys
 import os
+import json
 import subprocess
 import threading
 import time
+from urllib.parse import urlparse, parse_qs
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
@@ -20,6 +23,36 @@ PORT = 5001
 LATEST_FRAME = None
 FRAME_LOCK = threading.Lock()
 CLIENTS = set()
+CONFIG_FILE = "/tmp/camera_orientation.json"
+
+# Default orientation for reTerminal DM (sensor is physically mounted 180 degrees inverted)
+CURRENT_CONFIG = {
+    "hflip": True,
+    "vflip": True,
+    "rotation": 180
+}
+
+CURRENT_PROCESS = None
+PROCESS_LOCK = threading.Lock()
+
+
+def load_config():
+    global CURRENT_CONFIG
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                saved = json.load(f)
+                CURRENT_CONFIG.update(saved)
+        except Exception:
+            pass
+
+
+def save_config():
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(CURRENT_CONFIG, f)
+    except Exception:
+        pass
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -34,22 +67,68 @@ class MJPEGHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', '*')
         self.end_headers()
 
     def do_GET(self):
-        global LATEST_FRAME
+        global LATEST_FRAME, CURRENT_CONFIG
 
-        if self.path == '/health':
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path == '/health':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(b'{"status":"ok","camera":"libcamera-vid"}\n')
+            resp = {
+                "status": "ok",
+                "camera": "libcamera-vid",
+                "config": CURRENT_CONFIG
+            }
+            self.wfile.write(json.dumps(resp).encode('utf-8') + b'\n')
             return
 
-        if self.path == '/snapshot.jpg':
+        if path in ('/flip', '/rotate', '/set_orientation'):
+            params = parse_qs(parsed.query)
+            changed = False
+
+            if 'hflip' in params:
+                val = params['hflip'][0].lower() in ('1', 'true', 'yes')
+                if CURRENT_CONFIG['hflip'] != val:
+                    CURRENT_CONFIG['hflip'] = val
+                    changed = True
+
+            if 'vflip' in params:
+                val = params['vflip'][0].lower() in ('1', 'true', 'yes')
+                if CURRENT_CONFIG['vflip'] != val:
+                    CURRENT_CONFIG['vflip'] = val
+                    changed = True
+
+            if 'rotation' in params:
+                try:
+                    rot = int(params['rotation'][0])
+                    if rot in (0, 180) and CURRENT_CONFIG['rotation'] != rot:
+                        CURRENT_CONFIG['rotation'] = rot
+                        CURRENT_CONFIG['hflip'] = (rot == 180)
+                        CURRENT_CONFIG['vflip'] = (rot == 180)
+                        changed = True
+                except ValueError:
+                    pass
+
+            if changed:
+                save_config()
+                restart_camera_process()
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok", "config": CURRENT_CONFIG}).encode('utf-8') + b'\n')
+            return
+
+        if path == '/snapshot.jpg':
             with FRAME_LOCK:
                 frame = LATEST_FRAME
             if frame is None:
@@ -64,7 +143,7 @@ class MJPEGHandler(BaseHTTPRequestHandler):
             self.wfile.write(frame)
             return
 
-        if self.path in ('/stream.mjpg', '/video_feed', '/'):
+        if path in ('/stream.mjpg', '/video_feed', '/'):
             self.send_response(200)
             self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -94,9 +173,22 @@ class MJPEGHandler(BaseHTTPRequestHandler):
         self.send_error(404, 'Not Found')
 
 
-def capture_loop():
-    global LATEST_FRAME
+def restart_camera_process():
+    global CURRENT_PROCESS
+    with PROCESS_LOCK:
+        if CURRENT_PROCESS and CURRENT_PROCESS.poll() is None:
+            print("[MJPEG Server] Terminating camera process for orientation update...")
+            try:
+                CURRENT_PROCESS.terminate()
+                CURRENT_PROCESS.wait(timeout=2)
+            except Exception:
+                try:
+                    CURRENT_PROCESS.kill()
+                except Exception:
+                    pass
 
+
+def build_camera_cmd():
     cmd = [
         '/usr/bin/libcamera-vid',
         '-t', '0',
@@ -105,15 +197,29 @@ def capture_loop():
         '--height', '480',
         '--framerate', '30',
         '--codec', 'mjpeg',
-        '--nopreview',
-        '-o', '-'
+        '--nopreview'
     ]
 
+    if CURRENT_CONFIG.get('hflip', False):
+        cmd.append('--hflip')
+    if CURRENT_CONFIG.get('vflip', False):
+        cmd.append('--vflip')
+
+    cmd.extend(['-o', '-'])
+    return cmd
+
+
+def capture_loop():
+    global LATEST_FRAME, CURRENT_PROCESS
+
     while True:
+        cmd = build_camera_cmd()
         try:
             print(f"[MJPEG Server] Launching: {' '.join(cmd)}")
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=65536)
-            
+            with PROCESS_LOCK:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=65536)
+                CURRENT_PROCESS = proc
+
             buf = bytearray()
             while proc.poll() is None:
                 chunk = proc.stdout.read(8192)
@@ -133,7 +239,7 @@ def capture_loop():
                         if soi > 0:
                             del buf[:soi]
                         break
-                    
+
                     jpeg_bytes = bytes(buf[soi:eoi + 2])
                     del buf[:eoi + 2]
 
@@ -145,11 +251,12 @@ def capture_loop():
         except Exception as e:
             print(f"[MJPEG Server] Capture loop error: {e}")
 
-        time.sleep(1)
+        time.sleep(0.5)
 
 
 def main():
-    print(f"[MJPEG Server] Starting reTerminal DM Camera Service on port {PORT}...")
+    load_config()
+    print(f"[MJPEG Server] Starting reTerminal DM Camera Service on port {PORT} with orientation: {CURRENT_CONFIG}...")
     t = threading.Thread(target=capture_loop, daemon=True)
     t.start()
 
