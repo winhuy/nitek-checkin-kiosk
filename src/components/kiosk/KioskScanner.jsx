@@ -519,28 +519,15 @@ export default function KioskScanner({ onExitKiosk }) {
       // 1. Query available video input devices
       const rawDevices = await Html5Qrcode.getCameras().catch(() => []);
       
-      // Prioritize reTerminal / CSI loopback device first
-      const devices = [...rawDevices].sort((a, b) => {
-        const aL = (a.label || '').toLowerCase();
-        const bL = (b.label || '').toLowerCase();
-        const aHit = aL.includes('reterminal') || aL.includes('loopback') || aL.includes('csi');
-        const bHit = bL.includes('reterminal') || bL.includes('loopback') || bL.includes('csi');
-        if (aHit && !bHit) return -1;
-        if (!aHit && bHit) return 1;
-        return 0;
+      // Filter out raw 'unicam' (bayer format) if loopback device exists
+      const filtered = rawDevices.filter(d => {
+        const l = (d.label || '').toLowerCase();
+        return !l.includes('unicam') && !l.includes('bcm2835');
       });
 
+      // Prefer filtered devices, otherwise reverse rawDevices so virtual /dev/video24 comes before /dev/video0
+      const devices = filtered.length > 0 ? filtered : [...rawDevices].reverse();
       setCameraList(devices || []);
-
-      const scanner = new Html5Qrcode('kiosk-qr-viewfinder', {
-        formatsToSupport: [
-          Html5QrcodeSupportedFormats.QR_CODE,
-          Html5QrcodeSupportedFormats.CODE_128,
-          Html5QrcodeSupportedFormats.EAN_13,
-        ],
-        verbose: false,
-      });
-      qrScannerRef.current = scanner;
 
       const qrConfig = {
         fps: 15,
@@ -552,13 +539,23 @@ export default function KioskScanner({ onExitKiosk }) {
         aspectRatio: 1.0,
       };
 
-      // 2. Try devices in priority order
+      // 2. Try devices one by one with a fresh Html5Qrcode instance
       let started = false;
       if (devices && devices.length > 0) {
         for (let i = 0; i < devices.length; i++) {
           const targetDev = devices[(cameraIndex + i) % devices.length];
           try {
-            console.log('Attempting to start camera:', targetDev.label, targetDev.id);
+            console.log('Attempting camera device:', targetDev.label || targetDev.id);
+            const scanner = new Html5Qrcode('kiosk-qr-viewfinder', {
+              formatsToSupport: [
+                Html5QrcodeSupportedFormats.QR_CODE,
+                Html5QrcodeSupportedFormats.CODE_128,
+                Html5QrcodeSupportedFormats.EAN_13,
+              ],
+              verbose: false,
+            });
+            qrScannerRef.current = scanner;
+
             await scanner.start(
               targetDev.id,
               qrConfig,
@@ -569,15 +566,28 @@ export default function KioskScanner({ onExitKiosk }) {
             started = true;
             break;
           } catch (devErr) {
-            console.warn(`Camera ${targetDev.label} (${targetDev.id}) failed:`, devErr);
+            console.warn(`Camera attempt on ${targetDev.id} failed:`, devErr);
+            if (qrScannerRef.current) {
+              try {
+                await qrScannerRef.current.stop();
+                qrScannerRef.current.clear();
+              } catch (_) { /* ignore */ }
+              qrScannerRef.current = null;
+            }
           }
         }
       }
 
       if (!started) {
         // Fallback: try with generic facingMode
+        const fallbackScanner = new Html5Qrcode('kiosk-qr-viewfinder', {
+          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+          verbose: false,
+        });
+        qrScannerRef.current = fallbackScanner;
+
         try {
-          await scanner.start(
+          await fallbackScanner.start(
             { facingMode: 'environment' },
             qrConfig,
             (decodedText) => handleProcessCode(decodedText),
@@ -586,7 +596,7 @@ export default function KioskScanner({ onExitKiosk }) {
           setCameraActive(true);
           started = true;
         } catch (envErr) {
-          await scanner.start(
+          await fallbackScanner.start(
             { facingMode: 'user' },
             qrConfig,
             (decodedText) => handleProcessCode(decodedText),
