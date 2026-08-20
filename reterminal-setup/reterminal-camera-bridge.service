@@ -1,13 +1,16 @@
 [Unit]
-Description=reTerminal DM CSI Camera to V4L2 Loopback Streamer Bridge
+Description=reTerminal DM Native MJPEG Camera Streamer Service
 After=network.target
 
 [Service]
 Type=simple
 User=pi
-ExecStart=/bin/bash /home/pi/nitek-checkin-kiosk/reterminal-setup/camera-bridge.sh
+WorkingDirectory=/home/pi/nitek-checkin-kiosk/reterminal-setup
+ExecStart=/usr/bin/python3 /home/pi/nitek-checkin-kiosk/reterminal-setup/mjpeg_server.py
 Restart=always
-RestartSec=3
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

@@ -353,11 +353,13 @@ export default function KioskScanner({ onExitKiosk }) {
   const [manualCode, setManualCode] = useState('');
   const [showPinModal, setShowPinModal] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
+  const [useNativeMjpeg, setUseNativeMjpeg] = useState(false);
   const [cameraList, setCameraList] = useState([]);
   const [cameraIndex, setCameraIndex] = useState(0);
   const [cameraError, setCameraError] = useState(null);
 
   const videoRef = useRef(null);
+  const mjpegImgRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const animFrameRef = useRef(null);
@@ -527,46 +529,77 @@ export default function KioskScanner({ onExitKiosk }) {
   }, []);
 
   const scanLoop = useCallback(() => {
-    const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (video && video.readyState >= 2 && canvas) {
-      const w = video.videoWidth || 640;
-      const h = video.videoHeight || 480;
-      if (w > 0 && h > 0) {
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        if (ctx) {
-          ctx.drawImage(video, 0, 0, w, h);
-          try {
-            const imageData = ctx.getImageData(0, 0, w, h);
-            const code = jsQR(imageData.data, imageData.width, imageData.height, {
-              inversionAttempts: 'dontInvert',
-            });
-            if (code && code.data && handleProcessCodeRef.current) {
-              handleProcessCodeRef.current(code.data);
-            }
-          } catch (_) { /* ignore frame dropped */ }
-        }
+    const img = mjpegImgRef.current;
+    const video = videoRef.current;
+
+    let source = null;
+    let w = 0;
+    let h = 0;
+
+    if (img && img.naturalWidth > 0 && img.style.display !== 'none') {
+      source = img;
+      w = img.naturalWidth;
+      h = img.naturalHeight;
+    } else if (video && video.readyState >= 2 && video.style.display !== 'none') {
+      source = video;
+      w = video.videoWidth || 640;
+      h = video.videoHeight || 480;
+    }
+
+    if (source && canvas && w > 0 && h > 0) {
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (ctx) {
+        ctx.drawImage(source, 0, 0, w, h);
+        try {
+          const imageData = ctx.getImageData(0, 0, w, h);
+          const code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: 'dontInvert',
+          });
+          if (code && code.data && handleProcessCodeRef.current) {
+            handleProcessCodeRef.current(code.data);
+          }
+        } catch (_) { /* ignore frame dropped */ }
       }
     }
     animFrameRef.current = requestAnimationFrame(scanLoop);
   }, []);
 
-  // ── Start Native Camera Stream ──────────────────────────────────────────
+  // ── Start Camera Stream (Native MJPEG or WebRTC) ──────────────────────────
   const startScanner = useCallback(async () => {
     try {
       setCameraError(null);
       stopScanner();
 
-      // 1. Enumerate and probe readable video devices
+      // 1. Probe local native MJPEG streamer first (port 5001)
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 800);
+        const res = await fetch('http://127.0.0.1:5001/health', { signal: controller.signal }).catch(() => null);
+        clearTimeout(timeoutId);
+        if (res && res.ok) {
+          console.log('[Kiosk] Connected to local native libcamera MJPEG stream.');
+          setUseNativeMjpeg(true);
+          setCameraActive(true);
+          if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+          animFrameRef.current = requestAnimationFrame(scanLoop);
+          return;
+        }
+      } catch (_) {
+        // Fallback to WebRTC
+      }
+
+      setUseNativeMjpeg(false);
+
+      // 2. WebRTC Fallback
       const allDevs = await navigator.mediaDevices.enumerateDevices().catch(() => []);
       const videoDevs = allDevs.filter(d => d.kind === 'videoinput');
 
       let targetDevId = null;
       let workingDevs = [];
 
-      // Test reverse order (loopback / USB cams first)
       for (const dev of [...videoDevs].reverse()) {
         try {
           const testStream = await navigator.mediaDevices.getUserMedia({
@@ -612,7 +645,11 @@ export default function KioskScanner({ onExitKiosk }) {
   }, [cameraIndex, scanLoop, stopScanner]);
 
   const handleNextCamera = () => {
-    if (cameraList.length > 1) {
+    if (useNativeMjpeg) {
+      // Toggle to WebRTC or retry
+      setUseNativeMjpeg(false);
+      startScanner();
+    } else if (cameraList.length > 1) {
       setCameraIndex(i => (i + 1) % cameraList.length);
     } else {
       startScanner();
@@ -806,6 +843,29 @@ export default function KioskScanner({ onExitKiosk }) {
               border: '2px solid rgba(79,156,249,0.3)',
             }}
           >
+            {/* Native MJPEG Stream (for Raspberry Pi / reTerminal DM) */}
+            <img
+              ref={mjpegImgRef}
+              src={useNativeMjpeg ? "http://127.0.0.1:5001/stream.mjpg" : ""}
+              alt="Live Scanner Stream"
+              crossOrigin="anonymous"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                display: (useNativeMjpeg && cameraActive) ? 'block' : 'none',
+              }}
+              onLoad={() => setCameraActive(true)}
+              onError={() => {
+                if (useNativeMjpeg) {
+                  console.warn('MJPEG stream unreachable, falling back to WebRTC');
+                  setUseNativeMjpeg(false);
+                  startScanner();
+                }
+              }}
+            />
+
+            {/* WebRTC Video Element (Fallback for Desktop/Laptop/Cloud) */}
             <video
               ref={videoRef}
               autoPlay
@@ -815,7 +875,7 @@ export default function KioskScanner({ onExitKiosk }) {
                 width: '100%',
                 height: '100%',
                 objectFit: 'cover',
-                display: cameraActive ? 'block' : 'none',
+                display: (!useNativeMjpeg && cameraActive) ? 'block' : 'none',
               }}
             />
             <canvas ref={canvasRef} style={{ display: 'none' }} />
