@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=NITEK Check-in Kiosk UI
+Exec=/bin/bash /home/pi/nitek-checkin-kiosk/reterminal-setup/start-kiosk-ui.sh
+X-GNOME-Autostart-enabled=true
