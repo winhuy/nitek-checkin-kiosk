@@ -1,59 +1,52 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# NITEK CHECKIN — Setup & Auto-launch Script for Seeed Studio reTerminal DM
+# NITEK CHECKIN — Complete Master Setup Script for Seeed Studio reTerminal DM
 # Target OS: Raspberry Pi OS 64-bit / Debian 11/12 (ARM64)
 # ==============================================================================
 
 set -e
 
-echo "🚀 Bắt đầu cấu hình NITEK Check-in Kiosk trên reTerminal DM..."
+echo "🚀 [1/6] Bắt đầu dọn dẹp & cấu hình NITEK Check-in Kiosk trên reTerminal DM..."
 
-# 1. Cập nhật hệ điều hành & cài đặt gói bổ trợ
-echo "📦 Cập nhật gói hệ thống..."
-sudo apt-get update
+# 1. Dừng mọi tiến trình và service cũ
+echo "🛑 [2/6] Dừng các tiến trình và dịch vụ cũ..."
+sudo systemctl stop checkin-kiosk.service 2>/dev/null || true
+sudo systemctl stop nitek-kiosk-web.service 2>/dev/null || true
+sudo systemctl stop reterminal-camera-bridge.service 2>/dev/null || true
+sudo systemctl disable checkin-kiosk.service 2>/dev/null || true
+
+killall -9 chromium-browser chromium electron node npm 2>/dev/null || true
+pkill -9 -f "mjpeg_server.py" 2>/dev/null || true
+pkill -9 -f "libcamera-vid" 2>/dev/null || true
+
+# 2. Cài đặt các gói bổ trợ hệ thống
+echo "📦 [3/6] Kiểm tra và cài đặt gói hệ thống..."
+sudo apt-get update -y
 sudo apt-get install -y \
   curl \
   git \
   build-essential \
-  libnss3 \
-  libatk1.0-0 \
-  libatk-bridge2.0-0 \
-  libcups2 \
-  libdrm2 \
-  libxkbcommon0 \
-  libxcomposite1 \
-  libxdamage1 \
-  libxfixes3 \
-  libxrandr2 \
-  libgbm1 \
-  libpango-1.0-0 \
-  libcairo2 \
-  libasound2 \
+  libcamera-tools \
+  libcamera-v4l2 \
+  python3 \
   v4l-utils \
   x11-xserver-utils \
   unclutter
 
-# 2. Cài đặt Node.js 20 LTS (nếu chưa có)
-if ! command -v node &> /dev/null; then
-  echo "📥 Cài đặt Node.js 20 LTS ARM64..."
-  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-  sudo apt-get install -y nodejs
-fi
-
-echo "✓ Node.js version: $(node -v)"
-echo "✓ NPM version: $(npm -v)"
-
-# 3. Phân quyền Camera & Video cho người dùng hiện tại
+# 3. Phân quyền phần cứng
 CURRENT_USER=$(whoami)
-echo "🔒 Cấp quyền Camera (/dev/video*) cho user '$CURRENT_USER'..."
-sudo usermod -a -G video "$CURRENT_USER"
-sudo usermod -a -G dialout "$CURRENT_USER"
-sudo usermod -a -G gpio "$CURRENT_USER"
+echo "🔒 Phân quyền Video/Camera cho user '$CURRENT_USER'..."
+sudo usermod -a -G video "$CURRENT_USER" || true
+sudo usermod -a -G dialout "$CURRENT_USER" || true
+sudo usermod -a -G gpio "$CURRENT_USER" || true
 
-# 4. Tắt chế độ tắt màn hình / Sleep (Screen Blanking / DPMS)
-echo "🖥️ Tắt chế độ tắt màn hình tự động (Kiosk Mode Always ON)..."
+# 4. Khôi phục cấu hình Desktop LXDE chuẩn và tắt Screen Blanking
+echo "🖥️ [4/6] Cấu hình giao diện Desktop LXDE & Kiosk mode..."
 mkdir -p ~/.config/lxsession/LXDE-pi/
-cat << 'EOF' >> ~/.config/lxsession/LXDE-pi/autostart
+cat << 'EOF' > ~/.config/lxsession/LXDE-pi/autostart
+@lxpanel --profile LXDE-pi
+@pcmanfm --desktop --profile LXDE-pi
+@xscreensaver -no-splash
 @xset s off
 @xset -dpms
 @xset s noblank
@@ -61,48 +54,48 @@ cat << 'EOF' >> ~/.config/lxsession/LXDE-pi/autostart
 EOF
 
 # 5. Cài đặt dependencies và build dự án
-echo "🔨 Cài đặt dependencies dự án..."
-npm install
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_DIR"
 
-echo "🏗️ Đóng gói ứng dụng web..."
+echo "🔨 [5/6] Cài đặt Node modules & Build ứng dụng..."
+npm install
 npm run build
 
-# 6. Cấu hình systemd service để tự chạy khi mở máy
-SERVICE_FILE="/etc/systemd/system/checkin-kiosk.service"
-CURRENT_DIR=$(pwd)
+# 6. Đăng ký các dịch vụ tự khởi động (systemd services)
+echo "⚙️ [6/6] Cài đặt dịch vụ hệ thống (systemd services)..."
 
-echo "⚙️ Đăng ký dịch vụ tự khởi động (systemd service)..."
-sudo bash -c "cat << EOF > $SERVICE_FILE
-[Unit]
-Description=NITEK Checkin Kiosk on reTerminal DM
-After=network-online.target graphical.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=$CURRENT_USER
-Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/$CURRENT_USER/.Xauthority
-Environment=NODE_ENV=production
-WorkingDirectory=$CURRENT_DIR
-ExecStartPre=/bin/sleep 3
-ExecStart=$(which npm) run electron:start
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=graphical.target
-EOF"
-
+# Service 1: Camera Hardware Streamer
+sudo cp "$SCRIPT_DIR/reterminal-camera-bridge.service" /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable checkin-kiosk.service
+sudo systemctl enable reterminal-camera-bridge.service
+sudo systemctl restart reterminal-camera-bridge.service
 
-echo ""
-echo "=========================================================================="
-echo "🎉 HOÀN TẤT CẤU HÌNH CHO RETERMINAL DM!"
-echo "=========================================================================="
-echo "• Khởi chạy ngay thử nghiệm: npm run electron:start"
-echo "• Dịch vụ tự khởi động: sudo systemctl start checkin-kiosk.service"
-echo "• Xem nhật ký hoạt động: journalctl -u checkin-kiosk.service -f"
-echo "• Khởi động lại thiết bị: sudo reboot"
-echo "=========================================================================="
+# Service 2: Kiosk Web Server
+sudo cp "$SCRIPT_DIR/nitek-kiosk-web.service" /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable nitek-kiosk-web.service
+sudo systemctl restart nitek-kiosk-web.service
+
+# Tạo shortcut trên Desktop
+chmod +x "$SCRIPT_DIR/start-kiosk-ui.sh"
+mkdir -p ~/Desktop
+cat << EOF > ~/Desktop/NITEK-Kiosk.desktop
+[Desktop Entry]
+Type=Application
+Name=NITEK Check-in Kiosk
+Comment=Khởi chạy hệ thống điểm danh Kiosk toàn màn hình
+Exec=/bin/bash $SCRIPT_DIR/start-kiosk-ui.sh
+Icon=camera-web
+Terminal=false
+Categories=Application;
+EOF
+chmod +x ~/Desktop/NITEK-Kiosk.desktop
+
+echo "========================================================================"
+echo "🎉 HOÀN TẤT THIẾT LẬP NITEK CHECK-IN KIOSK TRÊN RETERMINAL DM!"
+echo "========================================================================"
+echo " - Camera Service: active (http://127.0.0.1:5001/stream.mjpg)"
+echo " - Web Kiosk: active (http://localhost:4173/?mode=kiosk)"
+echo " - Desktop Shortcut: ~/Desktop/NITEK-Kiosk.desktop"
+echo "========================================================================"
