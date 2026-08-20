@@ -27,7 +27,6 @@ sudo apt-get install -y \
   git \
   build-essential \
   libcamera-tools \
-  libcamera-v4l2 \
   python3 \
   v4l-utils \
   x11-xserver-utils \
