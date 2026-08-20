@@ -355,7 +355,9 @@ export default function KioskScanner({ onExitKiosk }) {
   const [manualCode, setManualCode] = useState('');
   const [showPinModal, setShowPinModal] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
-  const [cameraFacing, setCameraFacing] = useState('environment'); // 'user' | 'environment'
+  const [cameraList, setCameraList] = useState([]);
+  const [cameraIndex, setCameraIndex] = useState(0);
+  const [cameraError, setCameraError] = useState(null);
 
   const qrScannerRef = useRef(null);
   const cooldownRef = useRef(false);
@@ -502,12 +504,21 @@ export default function KioskScanner({ onExitKiosk }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleProcessCode]);
 
-  // ── QR Camera Scanner Lifecycle ──────────────────────────────────────────
+  // ── QR Camera Scanner Lifecycle with Robust Hardware Detection ──────────
   const startScanner = useCallback(async () => {
     try {
+      setCameraError(null);
       if (qrScannerRef.current) {
-        try { await qrScannerRef.current.stop(); } catch (_) { /* ignore */ }
+        try {
+          await qrScannerRef.current.stop();
+          qrScannerRef.current.clear();
+        } catch (_) { /* ignore */ }
+        qrScannerRef.current = null;
       }
+
+      // 1. Query available video input devices
+      const devices = await Html5Qrcode.getCameras().catch(() => []);
+      setCameraList(devices || []);
 
       const scanner = new Html5Qrcode('kiosk-qr-viewfinder', {
         formatsToSupport: [
@@ -519,26 +530,50 @@ export default function KioskScanner({ onExitKiosk }) {
       });
       qrScannerRef.current = scanner;
 
-      await scanner.start(
-        { facingMode: cameraFacing },
-        {
-          fps: 15,
-          qrbox: { width: 300, height: 300 },
-          aspectRatio: 1.0,
+      const qrConfig = {
+        fps: 15,
+        qrbox: (viewWidth, viewHeight) => {
+          const minDim = Math.min(viewWidth, viewHeight);
+          const size = Math.max(180, Math.floor(minDim * 0.72));
+          return { width: size, height: size };
         },
-        (decodedText) => {
-          handleProcessCode(decodedText);
-        },
-        () => {
-          // ignore transient scan frame drops
-        }
-      );
-      setCameraActive(true);
+        aspectRatio: 1.0,
+      };
+
+      // 2. Select camera config: Device ID -> or Environment -> or Generic
+      let targetConfig;
+      if (devices && devices.length > 0) {
+        const chosen = devices[cameraIndex % devices.length];
+        targetConfig = chosen.id;
+      } else {
+        targetConfig = { facingMode: 'environment' };
+      }
+
+      try {
+        await scanner.start(
+          targetConfig,
+          qrConfig,
+          (decodedText) => handleProcessCode(decodedText),
+          () => {}
+        );
+        setCameraActive(true);
+      } catch (firstErr) {
+        console.warn('First camera attempt failed, trying fallback mode:', firstErr);
+        // Fallback: try with generic facingMode
+        await scanner.start(
+          { facingMode: 'environment' },
+          qrConfig,
+          (decodedText) => handleProcessCode(decodedText),
+          () => {}
+        );
+        setCameraActive(true);
+      }
     } catch (err) {
-      console.warn('Kiosk camera start failed:', err);
+      console.error('Kiosk camera start failed:', err);
+      setCameraError(err.message || 'Không thể mở camera. Vui lòng kiểm tra quyền hoặc cắm lại camera.');
       setCameraActive(false);
     }
-  }, [cameraFacing, handleProcessCode]);
+  }, [cameraIndex, handleProcessCode]);
 
   const stopScanner = useCallback(async () => {
     if (qrScannerRef.current) {
@@ -551,8 +586,16 @@ export default function KioskScanner({ onExitKiosk }) {
     setCameraActive(false);
   }, []);
 
+  const handleNextCamera = () => {
+    if (cameraList.length > 1) {
+      setCameraIndex(i => (i + 1) % cameraList.length);
+    } else {
+      startScanner();
+    }
+  };
+
   useEffect(() => {
-    const t = setTimeout(startScanner, 400);
+    const t = setTimeout(startScanner, 300);
     return () => {
       clearTimeout(t);
       stopScanner();
@@ -779,30 +822,82 @@ export default function KioskScanner({ onExitKiosk }) {
               </div>
             </div>
 
-            {/* Camera Flip Button */}
-            <button
-              type="button"
-              onClick={() => setCameraFacing(f => f === 'environment' ? 'user' : 'environment')}
-              title="Đổi camera trước/sau"
-              style={{
-                position: 'absolute',
-                top: 12,
-                right: 12,
-                background: 'rgba(0,0,0,0.65)',
-                border: '1px solid rgba(255,255,255,0.2)',
-                color: '#fff',
-                width: 40,
-                height: 40,
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                zIndex: 5,
-              }}
-            >
-              <IconRefresh size={18} />
-            </button>
+            {/* Error or Retry Overlay */}
+            {!cameraActive && (
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  background: 'rgba(7,11,20,0.85)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 20,
+                  textAlign: 'center',
+                  zIndex: 4,
+                }}
+              >
+                <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(239,68,68,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+                  <IconAlertTriangle size={32} color="#ef4444" />
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#fff', marginBottom: 6 }}>
+                  {cameraError ? 'Không thể mở Camera' : 'Đang kết nối camera...'}
+                </div>
+                <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', maxWidth: 300, marginBottom: 16 }}>
+                  {cameraError || 'Đang tìm kiếm thiết bị camera tích hợp / USB...'}
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => startScanner()}
+                    className="btn btn-primary btn-sm"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <IconRefresh size={15} /> Thử Lại
+                  </button>
+                  {cameraList.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={handleNextCamera}
+                      className="btn btn-secondary btn-sm"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                      Đổi Camera ({cameraIndex + 1}/{cameraList.length})
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Camera Switch / Cycle Button */}
+            {cameraActive && (
+              <button
+                type="button"
+                onClick={handleNextCamera}
+                title={cameraList.length > 1 ? `Đổi camera (${cameraIndex + 1}/${cameraList.length})` : 'Khởi động lại camera'}
+                style={{
+                  position: 'absolute',
+                  top: 12,
+                  right: 12,
+                  background: 'rgba(0,0,0,0.7)',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  color: '#fff',
+                  padding: '6px 12px',
+                  borderRadius: 20,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  zIndex: 5,
+                }}
+              >
+                <IconRefresh size={14} />
+                {cameraList.length > 1 ? `Cam ${cameraIndex + 1}/${cameraList.length}` : 'Lật cam'}
+              </button>
+            )}
           </div>
 
           {/* Scanner Instructions & Alert Banner */}
