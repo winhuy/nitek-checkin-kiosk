@@ -1,0 +1,19 @@
+[Unit]
+Description=NITEK Checkin Kiosk on reTerminal DM
+After=network-online.target graphical.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+Environment=NODE_ENV=production
+WorkingDirectory=/home/pi/qr-checkin-app
+ExecStartPre=/bin/sleep 2
+ExecStart=/usr/bin/npm run electron:start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target
