@@ -25,11 +25,11 @@ FRAME_LOCK = threading.Lock()
 CLIENTS = set()
 CONFIG_FILE = "/tmp/camera_orientation.json"
 
-# Default orientation for reTerminal DM (sensor is physically mounted 180 degrees inverted)
+# Default orientation: Mirror mode (horizontal flip only for easy selfie scanning)
 CURRENT_CONFIG = {
     "hflip": True,
-    "vflip": True,
-    "rotation": 180
+    "vflip": False,
+    "rotation": 0
 }
 
 CURRENT_PROCESS = None

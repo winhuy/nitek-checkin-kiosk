@@ -373,21 +373,36 @@ export default function KioskScanner({ onExitKiosk }) {
     return () => clearInterval(timer);
   }, []);
 
-  // ── Load Session Attendance Count ───────────────────────────────────────
+  // ── Load Session Attendance Count & Recent Attendees ────────────────────
   const loadAttendance = useCallback(async () => {
     if (!activeSession) return;
     const { data } = await fetchAttendanceForSession(activeSession.id);
     if (data) {
       setAttendanceCount(data.length);
-      const recent = data
-        .slice(0, 4)
+      // Sort strictly newest first by checked_in_at or created_at descending
+      const sorted = [...data].sort((a, b) => {
+        const timeA = new Date(a.checked_in_at || a.created_at || 0).getTime();
+        const timeB = new Date(b.checked_in_at || b.created_at || 0).getTime();
+        return timeB - timeA;
+      });
+
+      const recent = sorted
+        .slice(0, 6)
         .map(rec => {
-          const m = members.find(mem => mem.id === rec.member_id);
+          const m = rec.club_members || members.find(mem => mem.id === rec.member_id);
+          const rawTime = rec.checked_in_at || rec.created_at;
           return {
             id: rec.id,
             name: m?.full_name || 'Thành viên',
             code: m?.member_code || '',
-            time: new Date(rec.checked_in_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+            time: rawTime
+              ? new Date(rawTime).toLocaleTimeString('vi-VN', {
+                  timeZone: 'Asia/Ho_Chi_Minh',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                })
+              : '--:--',
             status: rec.checkin_status,
           };
         });
@@ -397,7 +412,7 @@ export default function KioskScanner({ onExitKiosk }) {
 
   useEffect(() => {
     loadAttendance();
-    const interval = setInterval(loadAttendance, 10000);
+    const interval = setInterval(loadAttendance, 5000);
     return () => clearInterval(interval);
   }, [loadAttendance]);
 
@@ -464,6 +479,25 @@ export default function KioskScanner({ onExitKiosk }) {
       setTimeout(() => setAlertMsg(null), 3500);
       return;
     }
+
+    // Immediately update local recent attendees & count for instantaneous UI feedback
+    const nowTimeStr = new Date().toLocaleTimeString('vi-VN', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    setRecentAttendees(prev => [
+      {
+        id: `temp-${Date.now()}`,
+        name: member.full_name,
+        code: member.member_code,
+        time: nowTimeStr,
+        status: checkinStatus,
+      },
+      ...prev.filter(p => p.code !== member.member_code)
+    ].slice(0, 6));
+    setAttendanceCount(prev => prev + 1);
 
     // 5. Trigger Success Overlay and Chime
     playKioskChime(isLate ? 'late' : 'success');
@@ -775,10 +809,10 @@ export default function KioskScanner({ onExitKiosk }) {
           {/* Clock */}
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: 18, fontWeight: 800, color: '#ffffff', letterSpacing: 0.5, fontVariantNumeric: 'tabular-nums' }}>
-              {currentTime.toLocaleTimeString('vi-VN')}
+              {currentTime.toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </div>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', fontWeight: 500 }}>
-              {currentTime.toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+              {currentTime.toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', weekday: 'short', day: '2-digit', month: '2-digit' })}
             </div>
           </div>
 
