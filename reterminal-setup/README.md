@@ -24,9 +24,9 @@ Mở Terminal trên reTerminal DM (qua màn hình trực tiếp hoặc SSH):
 # Di chuyển vào thư mục người dùng
 cd /home/pi
 
-# Clone dự án từ Git (hoặc copy thư mục qr-checkin-app qua SCP / USB)
-git clone https://github.com/your-repo/qr-checkin-app.git
-cd qr-checkin-app
+# Clone dự án từ GitHub
+git clone https://github.com/winhuy/nitek-checkin-kiosk.git
+cd nitek-checkin-kiosk
 ```
 
 ### Bước 2: Tạo file cấu hình Supabase `.env`
