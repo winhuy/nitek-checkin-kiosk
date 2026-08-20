@@ -794,6 +794,17 @@ export function ClubProvider({ children }) {
     return { error };
   };
 
+  const deleteAttendanceRecord = async ({ recordId }) => {
+    if (!recordId || !supabase) return { error: new Error('Thiếu ID bản ghi') };
+    const { error } = await supabase
+      .from('club_attendance_records')
+      .delete()
+      .eq('id', recordId);
+
+    await fetchSessions();
+    return { error };
+  };
+
   const fetchAttendanceForSession = async (sessionId) => {
     if (!sessionId || !supabase) return { data: [], error: null };
     const { data, error } = await supabase
@@ -845,6 +856,7 @@ export function ClubProvider({ children }) {
       submitAbsenceRequest,
       reviewAbsenceRequest,
       revokeAbsence,
+      deleteAttendanceRecord,
       fetchAttendanceForSession,
       fetchAttendanceForMember,
       checkAutoCreateRecurring,

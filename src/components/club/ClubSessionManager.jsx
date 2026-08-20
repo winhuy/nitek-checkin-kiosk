@@ -160,48 +160,57 @@ function SessionDetailModal({ session, onClose }) {
     await load();
   };
 
-  // Export session attendance report to Excel
+  // Export session attendance as Excel with styled header and summary
   const exportSessionExcel = () => {
-    const sessionDateStr = new Date(session.session_date || session.created_at).toLocaleDateString('vi-VN');
+    const sessionDateFormatted = new Date(session.session_date).toLocaleDateString('vi-VN');
+    const headerInfo = [
+      ['BÁO CÁO ĐIỂM DANH BUỔI SINH HOẠT CLB'],
+      [`Tên buổi: ${session.title}`],
+      [`Ngày: ${sessionDateFormatted} | Giờ: ${session.start_time || '08:00'} | Địa điểm: ${session.location || 'Chưa thiết lập'}`],
+      [`Loại: ${session.is_mandatory === false ? 'Tự nguyện (Không tính vắng)' : 'Bắt buộc'}`],
+      [`Tổng thành viên: ${members.length} | Có mặt: ${presentList.length} | Vắng có phép: ${excusedList.length} | Vắng không phép: ${unexcusedList.length}`],
+      [], // blank row
+      ['STT', 'Mã TV', 'Họ Và Tên', 'Lớp', 'Trạng Thái', 'Giờ Quét', 'Trễ (Phút)', 'Ghi Chú / Lý Do Vắng'],
+    ];
 
-    const statusText = (key) => {
-      if (key === 'on_time') return 'Co mat - Dung gio';
-      if (key === 'late') return 'Co mat - Den tre';
-      if (key === 'excused') return 'Vang co phep';
-      return 'Vang khong phep';
-    };
+    const dataRows = fullStatusList.map((item, idx) => {
+      const m = item.member;
+      let statusStr = 'Vắng không phép';
+      if (item.statusKey === 'on_time') statusStr = 'Đúng giờ';
+      else if (item.statusKey === 'late') statusStr = 'Đi trễ';
+      else if (item.statusKey === 'excused') statusStr = 'Vắng có phép';
+      else if (item.statusKey === 'pending_excuse') statusStr = 'Đơn xin vắng (Chờ duyệt)';
 
-    const rows = fullStatusList.map((item, idx) => ({
-      STT: idx + 1,
-      'Ma Thanh Vien': item.member.member_code,
-      'Ho va Ten': item.member.full_name,
-      'Lop / Don Vi': item.member.class_name || '',
-      'Trang Thai': statusText(item.statusKey),
-      'Gio Diem Danh': item.checkinTime || '',
-      'So Phut Tre': item.lateMinutes || 0,
-      'Ly Do Vang': item.notes || '',
-    }));
+      return [
+        idx + 1,
+        m?.member_code || '',
+        m?.full_name || '',
+        m?.class_name || '',
+        statusStr,
+        item.checkinTime !== '—' ? item.checkinTime : '',
+        item.lateMinutes > 0 ? item.lateMinutes : '',
+        item.notes || '',
+      ];
+    });
 
-    const summaryRows = [
-      { Parameter: 'Tên Buổi Sinh Hoạt', Value: session.title },
-      { Parameter: 'Ngày Sinh Hoạt', Value: sessionDateStr },
-      { Parameter: 'Giờ Quy Định', Value: session.start_time || '08:00' },
-      { Parameter: 'Địa Điểm', Value: session.location || 'Phòng sinh hoạt CLB' },
-      { Parameter: 'Tổng Số Thành Viên CLB', Value: members.length },
-      { Parameter: 'Số Thành Viên Có Mặt', Value: presentList.length },
-      { Parameter: 'Số Thành Viên Vắng Có Phép', Value: excusedList.length },
-      { Parameter: 'Số Thành Viên Vắng Không Phép', Value: unexcusedList.length },
-      { Parameter: 'Tỷ Lệ Tham Gia', Value: `${Math.round((presentList.length / (members.length || 1)) * 100)}%` },
+    const worksheet = XLSX.utils.aoa_to_sheet([...headerInfo, ...dataRows]);
+
+    // Column widths
+    worksheet['!cols'] = [
+      { wch: 6 },  // STT
+      { wch: 12 }, // Mã TV
+      { wch: 26 }, // Họ Và Tên
+      { wch: 10 }, // Lớp
+      { wch: 18 }, // Trạng Thái
+      { wch: 12 }, // Giờ Quét
+      { wch: 12 }, // Trễ (Phút)
+      { wch: 30 }, // Ghi Chú
     ];
 
     const wb = XLSX.utils.book_new();
-    const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
-    const wsDetail = XLSX.utils.json_to_sheet(rows);
-
-    XLSX.utils.book_append_sheet(wb, wsSummary, 'TongQuan');
-    XLSX.utils.book_append_sheet(wb, wsDetail, 'DanhSachDiemDanh');
-
-    const fileName = `Bao_Cao_Sinh_Hoat_${session.title.replace(/[^a-zA-Z0-9_\-]/g, '_')}_${sessionDateStr.replace(/\//g, '-')}.xlsx`;
+    XLSX.utils.book_append_sheet(wb, worksheet, 'DiemDanh');
+    const safeTitle = (session.title || 'BuoiSinhHoat').replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_');
+    const fileName = `DiemDanh_${safeTitle}_${session.session_date}.xlsx`;
     XLSX.writeFile(wb, fileName);
   };
 
@@ -213,11 +222,15 @@ function SessionDetailModal({ session, onClose }) {
       onClick={onClose}
     >
       <div
+        className="session-detail-modal-content"
         onClick={e => e.stopPropagation()}
         style={{
           background: 'var(--bg-card)', border: '1px solid var(--border-color)',
-          borderRadius: 'var(--radius-xl)', maxWidth: 920, width: '100%',
+          borderRadius: 'var(--radius-xl)', maxWidth: 960, width: '100%',
           boxShadow: '0 24px 60px rgba(0,0,0,0.5)',
+          maxHeight: '92vh',
+          display: 'flex',
+          flexDirection: 'column',
           overflow: 'hidden',
         }}
       >
@@ -226,6 +239,7 @@ function SessionDetailModal({ session, onClose }) {
           padding: '20px 24px', borderBottom: '1px solid var(--border-color)',
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           background: 'rgba(79,156,249,0.05)', flexWrap: 'wrap', gap: 12,
+          flexShrink: 0,
         }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -280,6 +294,7 @@ function SessionDetailModal({ session, onClose }) {
           display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
           gap: 12, padding: '16px 24px', borderBottom: '1px solid var(--border-color)',
           background: 'rgba(0,0,0,0.2)',
+          flexShrink: 0,
         }}>
           <div style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 'var(--radius-md)', padding: 12, textAlign: 'center' }}>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 4 }}><IconDot size={7} color="#10b981" /> Có Mặt</div>
@@ -303,7 +318,7 @@ function SessionDetailModal({ session, onClose }) {
         </div>
 
         {/* Filter sub-tabs */}
-        <div style={{ padding: '12px 24px 0', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ padding: '12px 24px 0', display: 'flex', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
           <button
             className={`btn btn-sm ${modalTab === 'all' ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => setModalTab('all')}
@@ -345,8 +360,13 @@ function SessionDetailModal({ session, onClose }) {
           </button>
         </div>
 
-        {/* Body */}
-        <div style={{ padding: 24 }}>
+        {/* Scrollable Body Container */}
+        <div style={{
+          padding: '20px 24px',
+          flex: 1,
+          overflowY: 'auto',
+          minHeight: 0,
+        }}>
           {loading ? (
             <div style={{ textAlign: 'center', padding: 48 }}>
               <span className="loading-spinner" />
@@ -400,40 +420,89 @@ function SessionDetailModal({ session, onClose }) {
                               <div style={{ fontSize: 10, fontWeight: 700, color: '#f59e0b', marginTop: 3, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                                 <IconAlertTriangle size={11} color="#f59e0b" /> Trễ {item.lateMinutes}m ({item.checkinTime})
                               </div>
+                              <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+                                <button
+                                  type="button"
+                                  style={{
+                                    flex: 1,
+                                    background: 'rgba(16,185,129,0.15)',
+                                    border: '1px solid rgba(16,185,129,0.3)',
+                                    color: '#10b981',
+                                    borderRadius: 4,
+                                    padding: '3px 4px',
+                                    fontSize: 10,
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 3,
+                                    justifyContent: 'center',
+                                  }}
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (item.record?.id) {
+                                      await markOnTime({ recordId: item.record.id });
+                                      const { data } = await fetchAttendanceForSession(session.id);
+                                      setRecords(data || []);
+                                    }
+                                  }}
+                                  title="Đánh dấu đến đúng giờ"
+                                >
+                                  <IconDot size={6} color="#10b981" /> Đúng giờ
+                                </button>
+                                <button
+                                  type="button"
+                                  style={{
+                                    background: 'rgba(239,68,68,0.12)',
+                                    border: '1px solid rgba(239,68,68,0.3)',
+                                    color: '#ef4444',
+                                    borderRadius: 4,
+                                    padding: '3px 6px',
+                                    fontSize: 10,
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                  }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteRecord(item.record?.id, member?.full_name);
+                                  }}
+                                  title="Hủy điểm danh"
+                                >
+                                  <IconTrash size={11} color="#ef4444" />
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{ marginTop: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
+                              <span style={{ fontSize: 10, color: 'var(--accent-success)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                <IconDot size={6} color="#10b981" /> {item.checkinTime}
+                              </span>
                               <button
                                 type="button"
                                 style={{
-                                  marginTop: 4,
-                                  background: 'rgba(16,185,129,0.15)',
-                                  border: '1px solid rgba(16,185,129,0.3)',
-                                  color: '#10b981',
+                                  background: 'rgba(239,68,68,0.12)',
+                                  border: '1px solid rgba(239,68,68,0.25)',
+                                  color: '#ef4444',
                                   borderRadius: 4,
-                                  padding: '2px 6px',
-                                  fontSize: 10,
+                                  padding: '2px 5px',
+                                  fontSize: 9,
                                   fontWeight: 600,
                                   cursor: 'pointer',
                                   display: 'inline-flex',
                                   alignItems: 'center',
-                                  gap: 3,
-                                  width: '100%',
-                                  justifyContent: 'center',
+                                  gap: 2,
                                 }}
-                                onClick={async (e) => {
+                                onClick={(e) => {
                                   e.stopPropagation();
-                                  if (item.record?.id) {
-                                    await markOnTime({ recordId: item.record.id });
-                                    const { data } = await fetchAttendanceForSession(session.id);
-                                    setRecords(data || []);
-                                  }
+                                  handleDeleteRecord(item.record?.id, member?.full_name);
                                 }}
-                                title="Đánh dấu đến đúng giờ"
+                                title="Hủy điểm danh của thành viên này"
                               >
-                                <IconDot size={6} color="#10b981" /> Đổi đúng giờ
+                                <IconTrash size={10} color="#ef4444" /> Hủy
                               </button>
-                            </div>
-                          ) : (
-                            <div style={{ fontSize: 10, color: 'var(--accent-success)', marginTop: 3, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                              <IconDot size={6} color="#10b981" /> {item.checkinTime}
                             </div>
                           )}
                         </div>
@@ -444,7 +513,7 @@ function SessionDetailModal({ session, onClose }) {
               )}
 
               {/* Attendance Table */}
-              <div className="table-wrapper" style={{ maxHeight: 380, overflowY: 'auto' }}>
+              <div className="table-wrapper">
                 <table className="data-table">
                   <thead>
                     <tr>
@@ -453,101 +522,46 @@ function SessionDetailModal({ session, onClose }) {
                       <th>Lớp</th>
                       <th>Mã TV</th>
                       <th>Giờ / Trạng Thái</th>
-                      <th>Ghi chú / Lý do vắng</th>
+                      <th>Ghi chú</th>
                       <th>Thao tác</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredDisplay.map((item, i) => {
                       const m = item.member;
-
                       return (
                         <tr key={m.id}>
                           <td>{i + 1}</td>
                           <td style={{ fontWeight: 600 }}>{m?.full_name}</td>
-                          <td>
-                            {m?.class_name ? (
-                              <span style={{ fontSize: 12, color: 'var(--accent-primary)', fontWeight: 600 }}>
-                                {m.class_name}
-                              </span>
-                            ) : (
-                              <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>
-                            )}
-                          </td>
-                          <td><span className="ticket-code" style={{ fontSize: 11 }}>{m?.member_code}</span></td>
-                          <td>
-                            {item.statusKey === 'on_time' && (
-                              <span style={{ color: '#10b981', background: 'rgba(16,185,129,0.15)', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                <IconDot size={7} color="#10b981" /> Đúng giờ ({item.checkinTime})
-                              </span>
-                            )}
-                            {item.statusKey === 'late' && (
-                              <span style={{ color: '#f59e0b', background: 'rgba(245,158,11,0.15)', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                <IconAlertTriangle size={11} color="#f59e0b" /> Trễ {item.lateMinutes}m ({item.checkinTime})
-                              </span>
-                            )}
-                            {item.statusKey === 'excused' && (
-                              <span style={{ color: '#f59e0b', background: 'rgba(245,158,11,0.15)', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                <IconDot size={7} color="#f59e0b" /> Vắng có phép
-                              </span>
-                            )}
-                            {item.statusKey === 'unexcused' && (
-                              session.is_mandatory === false ? (
-                                <span style={{ color: '#9ca3af', background: 'rgba(156,163,175,0.15)', border: '1px solid rgba(156,163,175,0.3)', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                  <IconDot size={7} color="#9ca3af" /> Tự nguyện (Không tính vắng)
-                                </span>
-                              ) : (
-                                <span style={{ color: '#ef4444', background: 'rgba(239,68,68,0.15)', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                  <IconDot size={7} color="#ef4444" /> Vắng không phép
-                                </span>
-                              )
-                            )}
-                            {item.statusKey === 'pending_excuse' && (
-                              <span style={{ color: '#3b82f6', background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.4)', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                <IconMail size={12} color="#3b82f6" /> Đơn xin vắng (Chờ duyệt)
-                              </span>
-                            )}
-                          </td>
-                          <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                            {item.notes || '—'}
-                          </td>
+                          <td>{m?.class_name || '—'}</td>
+                          <td>{m?.member_code}</td>
+                          <td>{item.statusLabel}</td>
+                          <td>{item.notes || '—'}</td>
                           <td>
                             {item.statusKey === 'pending_excuse' ? (
                               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                 <button
                                   className="btn btn-sm"
-                                  style={{ background: '#10b981', color: '#fff', border: 'none', padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                                  style={{ background: '#10b981', color: '#fff', border: 'none', padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, cursor: 'pointer' }}
                                   onClick={async () => {
                                     await reviewAbsenceRequest({ recordId: item.record.id, statusKey: 'excused' });
-                                    const { data } = await fetchAttendanceForSession(session.id);
-                                    setRecords(data || []);
+                                    await load();
                                   }}
-                                  title="Duyệt vắng có phép (0 điểm)"
-                                >
-                                  <IconCheck size={12} /> Duyệt Có Phép
-                                </button>
+                                >Duyệt</button>
                                 <button
                                   className="btn btn-sm"
-                                  style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                                  style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, cursor: 'pointer' }}
                                   onClick={async () => {
                                     await reviewAbsenceRequest({ recordId: item.record.id, statusKey: 'unexcused' });
-                                    const { data } = await fetchAttendanceForSession(session.id);
-                                    setRecords(data || []);
+                                    await load();
                                   }}
-                                  title="Từ chối (Ghi nhận vắng không phép -1 điểm)"
-                                >
-                                  <IconX size={12} /> Từ Chối
-                                </button>
+                                >Từ chối</button>
                               </div>
                             ) : item.statusKey === 'excused' ? (
                               <button
                                 className="btn btn-secondary btn-sm"
                                 onClick={() => handleMarkUnexcused(m)}
-                                title="Đổi thành vắng không phép"
-                                style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                              >
-                                <IconX size={12} /> Đổi vắng không phép
-                              </button>
+                              >Hủy phép</button>
                             ) : item.statusKey === 'unexcused' ? (
                               <button
                                 className="btn btn-secondary btn-sm"
@@ -555,19 +569,58 @@ function SessionDetailModal({ session, onClose }) {
                                   setEditingExcuseMember(m);
                                   setExcuseNotes(item.notes || '');
                                 }}
-                                title="Đánh dấu vắng có phép"
-                                style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                              >
-                                <IconEdit size={12} /> Đánh dấu có phép
-                              </button>
+                              >Đánh dấu phép</button>
                             ) : item.statusKey === 'late' ? (
+                              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                                <button
+                                  className="btn btn-sm"
+                                  style={{
+                                    background: 'rgba(16,185,129,0.15)',
+                                    color: '#10b981',
+                                    border: '1px solid rgba(16,185,129,0.3)',
+                                    padding: '4px 10px',
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    borderRadius: 6,
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                  }}
+                                  onClick={async () => {
+                                    if (item.record?.id) {
+                                      await markOnTime({ recordId: item.record.id });
+                                      const { data } = await fetchAttendanceForSession(session.id);
+                                      setRecords(data || []);
+                                    }
+                                  }}
+                                  title="Đánh dấu thành viên này đến đúng giờ (xoá trạng thái trễ)"
+                                >
+                                  <IconDot size={6} color="#10b981" /> Đổi đúng giờ
+                                </button>
+                                <button
+                                  className="btn btn-danger btn-sm"
+                                  style={{
+                                    padding: '4px 8px',
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    borderRadius: 6,
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                  }}
+                                  onClick={() => handleDeleteRecord(item.record?.id, m?.full_name)}
+                                  title="Hủy điểm danh của thành viên này"
+                                >
+                                  <IconTrash size={12} /> Hủy điểm danh
+                                </button>
+                              </div>
+                            ) : item.statusKey === 'on_time' ? (
                               <button
-                                className="btn btn-sm"
+                                className="btn btn-danger btn-sm"
                                 style={{
-                                  background: 'rgba(16,185,129,0.15)',
-                                  color: '#10b981',
-                                  border: '1px solid rgba(16,185,129,0.3)',
-                                  padding: '4px 10px',
+                                  padding: '4px 8px',
                                   fontSize: 11,
                                   fontWeight: 700,
                                   borderRadius: 6,
@@ -576,16 +629,10 @@ function SessionDetailModal({ session, onClose }) {
                                   alignItems: 'center',
                                   gap: 4,
                                 }}
-                                onClick={async () => {
-                                  if (item.record?.id) {
-                                    await markOnTime({ recordId: item.record.id });
-                                    const { data } = await fetchAttendanceForSession(session.id);
-                                    setRecords(data || []);
-                                  }
-                                }}
-                                title="Đánh dấu thành viên này đến đúng giờ (xoá trạng thái trễ)"
+                                onClick={() => handleDeleteRecord(item.record?.id, m?.full_name)}
+                                title="Hủy điểm danh của thành viên này"
                               >
-                                <IconDot size={6} color="#10b981" /> Đổi đúng giờ
+                                <IconTrash size={12} /> Hủy điểm danh
                               </button>
                             ) : (
                               <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>
