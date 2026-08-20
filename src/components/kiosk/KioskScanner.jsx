@@ -62,6 +62,279 @@ function playKioskChime(type = 'success') {
   }
 }
 
+// ─── Welcome Overlay for Kiosk ───────────────────────────────────────────
+function KioskWelcomeOverlay({ overlay, onClose }) {
+  useEffect(() => {
+    const t = setTimeout(onClose, 4500);
+    return () => clearTimeout(t);
+  }, [onClose]);
+
+  if (!overlay) return null;
+  const { member, isLate, lateMinutes, startTime } = overlay;
+  const firstName = member?.full_name ? member.full_name.split(' ').pop() : 'Bạn';
+  const themeColor = isLate ? '#f59e0b' : '#10b981';
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 10000,
+        background: 'rgba(7, 11, 20, 0.95)',
+        backdropFilter: 'blur(20px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
+        cursor: 'pointer',
+        animation: 'fadeIn 0.2s ease-out',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: 'linear-gradient(180deg, #131d35 0%, #0d1424 100%)',
+          border: `2px solid ${themeColor}`,
+          boxShadow: `0 0 80px ${isLate ? 'rgba(245,158,11,0.3)' : 'rgba(16,185,129,0.35)'}`,
+          borderRadius: 32,
+          padding: '40px 48px',
+          maxWidth: 680,
+          width: '100%',
+          textAlign: 'center',
+          color: '#ffffff',
+        }}
+      >
+        <div
+          style={{
+            width: 100,
+            height: 100,
+            borderRadius: '50%',
+            background: isLate
+              ? 'linear-gradient(135deg, #f59e0b, #d97706)'
+              : 'linear-gradient(135deg, #10b981, #059669)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 20px',
+            boxShadow: `0 0 40px ${themeColor}`,
+          }}
+        >
+          {isLate ? <IconAlertTriangle size={52} color="#ffffff" /> : <IconCheck size={52} color="#ffffff" />}
+        </div>
+
+        <div style={{ fontSize: 16, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 2, color: themeColor, marginBottom: 8 }}>
+          {isLate ? 'ĐIỂM DANH ĐẾN TRỄ' : 'ĐIỂM DANH THÀNH CÔNG'}
+        </div>
+
+        <h1 style={{ fontSize: 38, fontWeight: 900, margin: '0 0 12px 0', letterSpacing: '-0.02em' }}>
+          Chào mừng, {firstName}!
+        </h1>
+
+        <div style={{ fontSize: 22, fontWeight: 600, color: 'rgba(255,255,255,0.9)', marginBottom: 16 }}>
+          {member?.full_name}
+        </div>
+
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: 'rgba(255,255,255,0.08)', padding: '8px 20px', borderRadius: 20, fontSize: 16, fontWeight: 600, marginBottom: 24 }}>
+          <IconPin size={16} color={themeColor} />
+          <span>Mã: <strong>{member?.member_code}</strong></span>
+          {member?.class_name && <span>• Lớp: {member.class_name}</span>}
+        </div>
+
+        {isLate ? (
+          <div style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 16, padding: '14px 20px', fontSize: 15, color: '#fcd34d', fontWeight: 600 }}>
+            ⚠️ Trễ {lateMinutes} phút so với giờ bắt đầu ({startTime || '08:00'})
+          </div>
+        ) : (
+          <div style={{ background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', borderRadius: 16, padding: '14px 20px', fontSize: 15, color: '#6ee7b7', fontWeight: 600 }}>
+            ✓ Đã ghi nhận đúng giờ! Chúc bạn buổi sinh hoạt hiệu quả!
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Admin PIN Unlock Modal ───────────────────────────────────────────────
+function AdminPinModal({ isOpen, onClose, onUnlock }) {
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState(false);
+
+  if (!isOpen) return null;
+
+  const handleDigit = (digit) => {
+    if (pin.length < 4) {
+      const next = pin + digit;
+      setPin(next);
+      setError(false);
+      if (next.length === 4) {
+        if (next === '1234' || next === '0000' || next === '9999') {
+          onUnlock();
+        } else {
+          setError(true);
+          setTimeout(() => setPin(''), 600);
+        }
+      }
+    }
+  };
+
+  const handleBackspace = () => {
+    setPin(p => p.slice(0, -1));
+    setError(false);
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 10000,
+        background: 'rgba(5, 8, 16, 0.92)',
+        backdropFilter: 'blur(16px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: '#0d1424',
+          border: '1px solid rgba(255,255,255,0.15)',
+          borderRadius: 28,
+          padding: '32px 28px',
+          maxWidth: 380,
+          width: '100%',
+          textAlign: 'center',
+          color: '#fff',
+          boxShadow: '0 25px 60px rgba(0,0,0,0.8)',
+        }}
+      >
+        <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(79,156,249,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+          <IconLock size={28} color="var(--accent-primary, #4f9cf9)" />
+        </div>
+        <h3 style={{ fontSize: 20, fontWeight: 800, margin: '0 0 6px 0' }}>Mở Khóa Quản Trị</h3>
+        <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', margin: '0 0 20px 0' }}>
+          Nhập mã PIN 4 số (Mặc định: 1234)
+        </p>
+
+        {/* PIN Dots */}
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 14, marginBottom: 24 }}>
+          {[0, 1, 2, 3].map(idx => (
+            <div
+              key={idx}
+              style={{
+                width: 18,
+                height: 18,
+                borderRadius: '50%',
+                border: `2px solid ${error ? '#ef4444' : pin.length > idx ? '#4f9cf9' : 'rgba(255,255,255,0.3)'}`,
+                background: error ? '#ef4444' : pin.length > idx ? '#4f9cf9' : 'transparent',
+                transition: 'all 0.15s ease',
+              }}
+            />
+          ))}
+        </div>
+
+        {error && (
+          <div style={{ color: '#ef4444', fontSize: 13, fontWeight: 600, marginBottom: 16 }}>
+            Sai mã PIN! Vui lòng thử lại.
+          </div>
+        )}
+
+        {/* Numpad */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, maxWidth: 280, margin: '0 auto 20px' }}>
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => handleDigit(String(n))}
+              style={{
+                height: 58,
+                borderRadius: 16,
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                color: '#fff',
+                fontSize: 22,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              {n}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setPin('')}
+            style={{
+              height: 58,
+              borderRadius: 16,
+              background: 'rgba(239,68,68,0.1)',
+              border: '1px solid rgba(239,68,68,0.2)',
+              color: '#ef4444',
+              fontSize: 14,
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            Xóa
+          </button>
+          <button
+            key={0}
+            type="button"
+            onClick={() => handleDigit('0')}
+            style={{
+              height: 58,
+              borderRadius: 16,
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              color: '#fff',
+              fontSize: 22,
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            0
+          </button>
+          <button
+            type="button"
+            onClick={handleBackspace}
+            style={{
+              height: 58,
+              borderRadius: 16,
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              color: '#fff',
+              fontSize: 18,
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            ⌫
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: 'rgba(255,255,255,0.6)',
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: 'pointer',
+            padding: '8px 16px',
+          }}
+        >
+          Đóng
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function KioskScanner({ onExitKiosk }) {
   const {
     activeSession,
