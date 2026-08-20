@@ -218,21 +218,12 @@ function SessionDetailModal({ session, onClose }) {
 
   return createPortal(
     <div
-      className="session-detail-modal-overlay modal-overlay modal-large"
+      className="session-detail-modal-overlay"
       onClick={onClose}
     >
       <div
         className="session-detail-modal-content"
         onClick={e => e.stopPropagation()}
-        style={{
-          background: 'var(--bg-card)', border: '1px solid var(--border-color)',
-          borderRadius: 'var(--radius-xl)', maxWidth: 960, width: '100%',
-          boxShadow: '0 24px 60px rgba(0,0,0,0.5)',
-          maxHeight: '92vh',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}
       >
         {/* Header */}
         <div style={{
@@ -361,12 +352,7 @@ function SessionDetailModal({ session, onClose }) {
         </div>
 
         {/* Scrollable Body Container */}
-        <div style={{
-          padding: '20px 24px',
-          flex: 1,
-          overflowY: 'auto',
-          minHeight: 0,
-        }}>
+        <div className="session-detail-body">
           {loading ? (
             <div style={{ textAlign: 'center', padding: 48 }}>
               <span className="loading-spinner" />
