@@ -2,6 +2,16 @@ const { app, BrowserWindow, ipcMain, session } = require('electron');
 const path = require('path');
 const { exec } = require('child_process');
 
+// ── Ozone Platform & Display Fallback (Supports Wayland & X11 on Raspberry Pi OS) ──
+app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
+app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform');
+app.commandLine.appendSwitch('no-sandbox');
+
+// Ensure DISPLAY is set to :0 if running from headless SSH session
+if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+  process.env.DISPLAY = ':0';
+}
+
 // ── Linux Touchscreen & Hardware Flags for reTerminal DM (Raspberry Pi CM4) ──
 app.commandLine.appendSwitch('touch-events', 'enabled');
 app.commandLine.appendSwitch('enable-touch-drag-drop');
