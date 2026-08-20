@@ -19,6 +19,8 @@ app.commandLine.appendSwitch('disable-pinch'); // Disable accidental pinch-to-zo
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('disable-dev-shm-usage');
+app.commandLine.appendSwitch('disable-gpu-sandbox');
 
 let mainWindow = null;
 

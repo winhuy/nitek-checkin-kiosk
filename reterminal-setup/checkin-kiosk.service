@@ -8,8 +8,9 @@ Type=simple
 User=pi
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/pi/.Xauthority
+Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=NODE_ENV=production
-WorkingDirectory=/home/pi/qr-checkin-app
+WorkingDirectory=/home/pi/nitek-checkin-kiosk
 ExecStartPre=/bin/sleep 2
 ExecStart=/usr/bin/npm run electron:start
 Restart=always
