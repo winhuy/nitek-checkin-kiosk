@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+import jsQR from 'jsqr';
 import { supabase } from '../../lib/supabaseClient';
 import { useClub, checkIsLate } from '../../contexts/ClubContext';
 import {
@@ -48,295 +48,20 @@ function playKioskChime(type = 'success') {
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.5);
     } else {
+      // error
       osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(220, ctx.currentTime);
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+      osc.frequency.setValueAtTime(220.00, ctx.currentTime); // A3
+      osc.frequency.setValueAtTime(180.00, ctx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.35, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
       osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.35);
+      osc.stop(ctx.currentTime + 0.4);
     }
   } catch (_) {
-    // Ignore audio errors if blocked by browser policy
+    // ignore audio block
   }
 }
 
-// ─── Welcome Overlay for Kiosk ───────────────────────────────────────────
-function KioskWelcomeOverlay({ overlay, onClose }) {
-  useEffect(() => {
-    const t = setTimeout(onClose, 4500);
-    return () => clearTimeout(t);
-  }, [onClose]);
-
-  if (!overlay) return null;
-  const { member, isLate, lateMinutes, startTime } = overlay;
-  const firstName = member?.full_name ? member.full_name.split(' ').pop() : 'Bạn';
-  const themeColor = isLate ? '#f59e0b' : '#10b981';
-
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 10000,
-        background: 'rgba(7, 11, 20, 0.95)',
-        backdropFilter: 'blur(20px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-        cursor: 'pointer',
-        animation: 'fadeIn 0.2s ease-out',
-      }}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          background: 'linear-gradient(180deg, #131d35 0%, #0d1424 100%)',
-          border: `2px solid ${themeColor}`,
-          boxShadow: `0 0 80px ${isLate ? 'rgba(245,158,11,0.3)' : 'rgba(16,185,129,0.35)'}`,
-          borderRadius: 32,
-          padding: '40px 48px',
-          maxWidth: 680,
-          width: '100%',
-          textAlign: 'center',
-          color: '#ffffff',
-          animation: 'welcomePop 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
-        }}
-      >
-        <div
-          style={{
-            width: 100,
-            height: 100,
-            borderRadius: '50%',
-            background: isLate
-              ? 'linear-gradient(135deg, #f59e0b, #d97706)'
-              : 'linear-gradient(135deg, #10b981, #059669)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            margin: '0 auto 20px',
-            boxShadow: `0 0 40px ${themeColor}`,
-          }}
-        >
-          {isLate ? <IconAlertTriangle size={52} color="#ffffff" /> : <IconCheck size={52} color="#ffffff" />}
-        </div>
-
-        <div style={{ fontSize: 16, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 2, color: themeColor, marginBottom: 8 }}>
-          {isLate ? 'ĐIỂM DANH ĐẾN TRỄ' : 'ĐIỂM DANH THÀNH CÔNG'}
-        </div>
-
-        <h1 style={{ fontSize: 38, fontWeight: 900, margin: '0 0 12px 0', letterSpacing: '-0.02em' }}>
-          Chào mừng, {firstName}!
-        </h1>
-
-        <div style={{ fontSize: 22, fontWeight: 600, color: 'rgba(255,255,255,0.9)', marginBottom: 16 }}>
-          {member?.full_name}
-        </div>
-
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: 'rgba(255,255,255,0.08)', padding: '8px 20px', borderRadius: 20, fontSize: 16, fontWeight: 600, marginBottom: 24 }}>
-          <IconPin size={16} color={themeColor} />
-          <span>Mã: <strong>{member?.member_code}</strong></span>
-          {member?.class_name && <span>• Lớp: {member.class_name}</span>}
-        </div>
-
-        {isLate ? (
-          <div style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 16, padding: '14px 20px', fontSize: 15, color: '#fcd34d', fontWeight: 600 }}>
-            ⚠️ Trễ {lateMinutes} phút so với giờ bắt đầu ({startTime || '08:00'})
-          </div>
-        ) : (
-          <div style={{ background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', borderRadius: 16, padding: '14px 20px', fontSize: 15, color: '#6ee7b7', fontWeight: 600 }}>
-            ✓ Đã ghi nhận đúng giờ! Chúc bạn buổi sinh hoạt hiệu quả!
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Admin PIN Unlock Modal ───────────────────────────────────────────────
-function AdminPinModal({ isOpen, onClose, onUnlock }) {
-  const [pin, setPin] = useState('');
-  const [error, setError] = useState(false);
-
-  if (!isOpen) return null;
-
-  const handleDigit = (digit) => {
-    if (pin.length < 4) {
-      const next = pin + digit;
-      setPin(next);
-      setError(false);
-      if (next.length === 4) {
-        // Default PIN: 1234 or 0000
-        if (next === '1234' || next === '0000' || next === '9999') {
-          onUnlock();
-        } else {
-          setError(true);
-          setTimeout(() => setPin(''), 600);
-        }
-      }
-    }
-  };
-
-  const handleBackspace = () => {
-    setPin(p => p.slice(0, -1));
-    setError(false);
-  };
-
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 10000,
-        background: 'rgba(5, 8, 16, 0.92)',
-        backdropFilter: 'blur(16px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 20,
-      }}
-      onClick={onClose}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          background: '#0d1424',
-          border: '1px solid rgba(255,255,255,0.15)',
-          borderRadius: 28,
-          padding: '32px 28px',
-          maxWidth: 380,
-          width: '100%',
-          textAlign: 'center',
-          color: '#fff',
-          boxShadow: '0 25px 60px rgba(0,0,0,0.8)',
-        }}
-      >
-        <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(79,156,249,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
-          <IconLock size={28} color="var(--accent-primary, #4f9cf9)" />
-        </div>
-        <h3 style={{ fontSize: 20, fontWeight: 800, margin: '0 0 6px 0' }}>Mở Khóa Quản Trị</h3>
-        <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', margin: '0 0 20px 0' }}>
-          Nhập mã PIN 4 số (Mặc định: 1234)
-        </p>
-
-        {/* PIN Dots */}
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 14, marginBottom: 24 }}>
-          {[0, 1, 2, 3].map(idx => (
-            <div
-              key={idx}
-              style={{
-                width: 18,
-                height: 18,
-                borderRadius: '50%',
-                border: `2px solid ${error ? '#ef4444' : pin.length > idx ? '#4f9cf9' : 'rgba(255,255,255,0.3)'}`,
-                background: error ? '#ef4444' : pin.length > idx ? '#4f9cf9' : 'transparent',
-                transition: 'all 0.15s ease',
-              }}
-            />
-          ))}
-        </div>
-
-        {error && (
-          <div style={{ color: '#ef4444', fontSize: 13, fontWeight: 600, marginBottom: 16 }}>
-            Sai mã PIN! Vui lòng thử lại.
-          </div>
-        )}
-
-        {/* Numpad */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, maxWidth: 280, margin: '0 auto 20px' }}>
-          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
-            <button
-              key={n}
-              type="button"
-              onClick={() => handleDigit(String(n))}
-              style={{
-                height: 58,
-                borderRadius: 16,
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                color: '#fff',
-                fontSize: 22,
-                fontWeight: 700,
-                cursor: 'pointer',
-                transition: 'background 0.1s ease',
-              }}
-            >
-              {n}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => setPin('')}
-            style={{
-              height: 58,
-              borderRadius: 16,
-              background: 'rgba(239,68,68,0.1)',
-              border: '1px solid rgba(239,68,68,0.2)',
-              color: '#ef4444',
-              fontSize: 14,
-              fontWeight: 700,
-              cursor: 'pointer',
-            }}
-          >
-            Xóa
-          </button>
-          <button
-            key={0}
-            type="button"
-            onClick={() => handleDigit('0')}
-            style={{
-              height: 58,
-              borderRadius: 16,
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: '#fff',
-              fontSize: 22,
-              fontWeight: 700,
-              cursor: 'pointer',
-            }}
-          >
-            0
-          </button>
-          <button
-            type="button"
-            onClick={handleBackspace}
-            style={{
-              height: 58,
-              borderRadius: 16,
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: '#fff',
-              fontSize: 18,
-              fontWeight: 700,
-              cursor: 'pointer',
-            }}
-          >
-            ⌫
-          </button>
-        </div>
-
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            background: 'transparent',
-            border: 'none',
-            color: 'rgba(255,255,255,0.6)',
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: 'pointer',
-            padding: '8px 16px',
-          }}
-        >
-          Đóng
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Main Kiosk Scanner Component ─────────────────────────────────────────
 export default function KioskScanner({ onExitKiosk }) {
   const {
     activeSession,
@@ -359,7 +84,10 @@ export default function KioskScanner({ onExitKiosk }) {
   const [cameraIndex, setCameraIndex] = useState(0);
   const [cameraError, setCameraError] = useState(null);
 
-  const qrScannerRef = useRef(null);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const animFrameRef = useRef(null);
   const cooldownRef = useRef(false);
   const barcodeBufferRef = useRef('');
   const lastKeyTimeRef = useRef(0);
@@ -504,109 +232,102 @@ export default function KioskScanner({ onExitKiosk }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleProcessCode]);
 
-  // ── QR Camera Scanner Lifecycle with Robust Hardware Detection ──────────
+  // ── Continuous QR Scan Loop via Canvas and jsQR ──────────────────────────
+  const stopScanner = useCallback(() => {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraActive(false);
+  }, []);
+
+  const scanLoop = useCallback(() => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (video && video.readyState >= 2 && canvas) {
+      const w = video.videoWidth || 640;
+      const h = video.videoHeight || 480;
+      if (w > 0 && h > 0) {
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, w, h);
+          try {
+            const imageData = ctx.getImageData(0, 0, w, h);
+            const code = jsQR(imageData.data, imageData.width, imageData.height, {
+              inversionAttempts: 'dontInvert',
+            });
+            if (code && code.data) {
+              handleProcessCode(code.data);
+            }
+          } catch (_) { /* ignore frame dropped */ }
+        }
+      }
+    }
+    animFrameRef.current = requestAnimationFrame(scanLoop);
+  }, [handleProcessCode]);
+
+  // ── Start Native Camera Stream ──────────────────────────────────────────
   const startScanner = useCallback(async () => {
     try {
       setCameraError(null);
-      if (qrScannerRef.current) {
-        try {
-          await qrScannerRef.current.stop();
-          qrScannerRef.current.clear();
-        } catch (_) { /* ignore */ }
-        qrScannerRef.current = null;
-      }
+      stopScanner();
 
-      // 1. Query all videoinput devices
+      // 1. Enumerate and probe readable video devices
       const allDevs = await navigator.mediaDevices.enumerateDevices().catch(() => []);
       const videoDevs = allDevs.filter(d => d.kind === 'videoinput');
 
-      // 2. Probe devices to find the readable one (filters out raw bayer unicam nodes)
-      let targetDeviceId = null;
-      let workingList = [];
+      let targetDevId = null;
+      let workingDevs = [];
 
-      // Test devices in reverse order (loopback / USB cams are listed after raw unicam nodes)
-      const probeOrder = [...videoDevs].reverse();
-
-      for (const dev of probeOrder) {
+      // Test reverse order (loopback / USB cams first)
+      for (const dev of [...videoDevs].reverse()) {
         try {
-          const constraints = dev.deviceId
-            ? { video: { deviceId: { exact: dev.deviceId } } }
-            : { video: true };
-          const testStream = await navigator.mediaDevices.getUserMedia(constraints);
+          const testStream = await navigator.mediaDevices.getUserMedia({
+            video: dev.deviceId ? { deviceId: { exact: dev.deviceId } } : true,
+          });
           testStream.getTracks().forEach(t => t.stop());
-          workingList.push(dev);
-          if (!targetDeviceId) {
-            targetDeviceId = dev.deviceId;
-          }
+          workingDevs.push(dev);
+          if (!targetDevId) targetDevId = dev.deviceId;
         } catch (probeErr) {
-          console.warn('Skipping unreadable video device:', dev.label || dev.deviceId, probeErr.name);
+          console.warn('Skipping unreadable node:', dev.label || dev.deviceId, probeErr.name);
         }
       }
 
-      // If probe found working devices, update camera list
-      const finalList = workingList.length > 0 ? workingList : videoDevs;
-      setCameraList(finalList);
+      const available = workingDevs.length > 0 ? workingDevs : videoDevs;
+      setCameraList(available);
 
-      // 3. Clear viewfinder container completely before attaching Html5Qrcode
-      const vfEl = document.getElementById('kiosk-qr-viewfinder');
-      if (vfEl) vfEl.innerHTML = '';
+      const activeDevId = targetDevId || (available[cameraIndex % available.length]?.deviceId);
 
-      const scanner = new Html5Qrcode('kiosk-qr-viewfinder', {
-        formatsToSupport: [
-          Html5QrcodeSupportedFormats.QR_CODE,
-          Html5QrcodeSupportedFormats.CODE_128,
-          Html5QrcodeSupportedFormats.EAN_13,
-        ],
-        verbose: false,
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: activeDevId
+          ? { deviceId: { exact: activeDevId }, width: { ideal: 640 }, height: { ideal: 480 } }
+          : { width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
       });
-      qrScannerRef.current = scanner;
 
-      const qrConfig = {
-        fps: 15,
-        qrbox: (viewWidth, viewHeight) => {
-          const minDim = Math.min(viewWidth, viewHeight);
-          const size = Math.max(180, Math.floor(minDim * 0.72));
-          return { width: size, height: size };
-        },
-        aspectRatio: 1.0,
-      };
+      streamRef.current = stream;
 
-      // 4. Start scanner on targetDeviceId
-      const activeDevId = targetDeviceId || (finalList[cameraIndex % finalList.length]?.deviceId);
-      
-      if (activeDevId) {
-        await scanner.start(
-          activeDevId,
-          qrConfig,
-          (decodedText) => handleProcessCode(decodedText),
-          () => {}
-        );
-      } else {
-        await scanner.start(
-          { facingMode: 'environment' },
-          qrConfig,
-          (decodedText) => handleProcessCode(decodedText),
-          () => {}
-        );
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+        setCameraActive(true);
+        animFrameRef.current = requestAnimationFrame(scanLoop);
       }
-      setCameraActive(true);
     } catch (err) {
       console.error('Kiosk camera start failed:', err);
       setCameraError(err.name ? `${err.name}: ${err.message}` : (err.message || 'Không thể mở camera. Vui lòng thử lại.'));
       setCameraActive(false);
     }
-  }, [cameraIndex, handleProcessCode]);
-
-  const stopScanner = useCallback(async () => {
-    if (qrScannerRef.current) {
-      try {
-        await qrScannerRef.current.stop();
-        qrScannerRef.current.clear();
-      } catch (_) { /* ignore */ }
-      qrScannerRef.current = null;
-    }
-    setCameraActive(false);
-  }, []);
+  }, [cameraIndex, scanLoop, stopScanner]);
 
   const handleNextCamera = () => {
     if (cameraList.length > 1) {
@@ -799,14 +520,19 @@ export default function KioskScanner({ onExitKiosk }) {
               border: '2px solid rgba(79,156,249,0.3)',
             }}
           >
-            <div
-              id="kiosk-qr-viewfinder"
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
               style={{
                 width: '100%',
                 height: '100%',
                 objectFit: 'cover',
+                display: cameraActive ? 'block' : 'none',
               }}
             />
+            <canvas ref={canvasRef} style={{ display: 'none' }} />
 
             {/* Target Reticle Overlay */}
             <div
